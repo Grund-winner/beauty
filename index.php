@@ -2,13 +2,13 @@
 session_start();
 
 // ============================================================================
-// CONFIGURATION - À DÉPLACER DANS UN FICHIER SÉPARÉ EN PRODUCTION
+// CONFIGURATION
 // ============================================================================
-require_once 'config.php'; // Fichier contenant la clé API
+require_once 'config.php';
 
-// Si config.php n'existe pas, on définit une valeur par défaut (à remplacer)
-if (!defined('GROQ_API_KEY')) {
-    define('GROQ_API_KEY', 'VOTRE_CLE_API_ICI'); // ⚠️ REMPLACER PAR VOTRE CLÉ
+// Vérifier que la clé API est configurée
+if (!isApiKeyConfigured()) {
+    $apiKeyError = 'La clé API Groq n\'est pas configurée. Veuillez ajouter votre clé API dans config.php ou définir la variable d\'environnement GROQ_API_KEY.';
 }
 
 // ============================================================================
@@ -31,36 +31,41 @@ $data = loadData();
 // VARIABLES DE TRAITEMENT
 // ============================================================================
 $generatedResult = null;
-$error = null;
+$error = isset($apiKeyError) ? $apiKeyError : null;
 $isGenerating = false;
-$autoDownloadScript = ''; // Script JS pour téléchargement automatique
+$autoDownloadScript = '';
 
 // ============================================================================
 // TRAITEMENT DU FORMULAIRE DE GÉNÉRATION
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generer'])) {
-    $isGenerating = true;
     
-    $productName = trim($_POST['product_name'] ?? '');
-    $category = $_POST['category'] ?? '';
-    $brand = trim($_POST['brand'] ?? '');
-    $style = $_POST['style'] ?? 'elegant';
-    $characteristics = trim($_POST['characteristics'] ?? '');
-    $targetAudience = trim($_POST['target_audience'] ?? '');
-    $priceRange = trim($_POST['price_range'] ?? '');
-    $originalImageUrl = $_POST['original_image_url'] ?? '';
-    
-    // Validation
-    if (empty($productName) || empty($category)) {
-        $error = 'Veuillez remplir au moins le nom du produit et la catégorie.';
+    // Vérifier que la clé API est configurée avant de continuer
+    if (!isApiKeyConfigured()) {
+        $error = 'La clé API Groq n\'est pas configurée. Veuillez configurer votre clé API.';
     } else {
-        // Appel à l'API Groq
-        $promptData = [
-            'model' => 'llama-3.3-70b-versatile',
-            'messages' => [
-                [
-                    'role' => 'system',
-                    'content' => 'Tu es un expert en marketing de luxe et en photographie de produits pour une boutique premium "Beauty Clinic" spécialisée en mode et beauté au Togo.
+        $isGenerating = true;
+        
+        $productName = trim($_POST['product_name'] ?? '');
+        $category = $_POST['category'] ?? '';
+        $brand = trim($_POST['brand'] ?? '');
+        $style = $_POST['style'] ?? 'elegant';
+        $characteristics = trim($_POST['characteristics'] ?? '');
+        $targetAudience = trim($_POST['target_audience'] ?? '');
+        $priceRange = trim($_POST['price_range'] ?? '');
+        $originalImageUrl = $_POST['original_image_url'] ?? '';
+        
+        // Validation
+        if (empty($productName) || empty($category)) {
+            $error = 'Veuillez remplir au moins le nom du produit et la catégorie.';
+        } else {
+            // Appel à l'API Groq
+            $promptData = [
+                'model' => GROQ_MODEL,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'Tu es un expert en marketing de luxe et en photographie de produits pour une boutique premium "Beauty Clinic" spécialisée en mode et beauté au Togo.
 
 Ta mission est de créer :
 1. Une description de produit engageante, professionnelle et persuasive (3-4 phrases maximum)
@@ -83,10 +88,10 @@ FORMAT DE RÉPONSE (JSON uniquement):
   "imagePrompt": "Prompt détaillé en anglais pour transformer la photo en image professionnelle de catalogue...",
   "title": "Titre court et accrocheur du produit"
 }'
-                ],
-                [
-                    'role' => 'user',
-                    'content' => "Génère une description et un prompt d'amélioration d'image pour ce produit:
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => "Génère une description et un prompt d'amélioration d'image pour ce produit:
 
 NOM: $productName
 CATÉGORIE: $category
@@ -98,79 +103,103 @@ GAMME DE PRIX: $priceRange
 IMAGE ORIGINALE: " . ($originalImageUrl ? 'Une photo existe et doit être améliorée/transformée' : 'Aucune photo fournie') . "
 
 La boutique 'Beauty Clinic' propose des produits de luxe au Togo: parfums, sacs, chaussures, accessoires."
-                ]
-            ],
-            'temperature' => 0.7,
-            'max_tokens' => 800,
-        ];
-        
-        $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($promptData));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Authorization: Bearer ' . GROQ_API_KEY,
-            'Content-Type: application/json'
-        ]);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-        
-        if ($curlError) {
-            $error = 'Erreur de connexion: ' . htmlspecialchars($curlError);
-        } elseif ($httpCode === 200 && $response) {
-            $result = json_decode($response, true);
-            $content = $result['choices'][0]['message']['content'] ?? '';
+                    ]
+                ],
+                'temperature' => 0.7,
+                'max_tokens' => 800,
+            ];
             
-            // Extraire le JSON de la réponse
-            preg_match('/\{[\s\S]*\}/', $content, $matches);
-            if ($matches) {
-                $parsedContent = json_decode($matches[0], true);
-                
-                if ($parsedContent && isset($parsedContent['description']) && isset($parsedContent['imagePrompt'])) {
-                    $imagePrompt = urlencode($parsedContent['imagePrompt']);
-                    
-                    // Générer l'URL de l'image améliorée
-                    $enhancedImageUrl = "https://image.pollinations.ai/prompt/$imagePrompt?width=1024&height=1024&nologo=true&seed=" . time();
-                    
-                    // Télécharger l'image localement pour le téléchargement automatique
-                    $localImagePath = downloadImage($enhancedImageUrl, $productName);
-                    
-                    $generatedResult = [
-                        'title' => $parsedContent['title'] ?? $productName,
-                        'description' => $parsedContent['description'],
-                        'imageUrl' => $enhancedImageUrl,
-                        'localImagePath' => $localImagePath,
-                        'prompt' => $parsedContent['imagePrompt'],
-                        'originalImage' => $originalImageUrl,
-                        'productData' => [
-                            'name' => $productName,
-                            'category' => $category,
-                            'brand' => $brand,
-                            'price' => $_POST['price'] ?? '',
-                        ]
-                    ];
-                    
-                    // Sauvegarder dans la session
-                    $_SESSION['last_generated'] = $generatedResult;
-                    
-                    // Générer le script de téléchargement automatique
-                    if ($localImagePath) {
-                        $autoDownloadScript = generateAutoDownloadScript($localImagePath, $productName);
-                    }
-                    
-                } else {
-                    $error = 'Erreur lors du parsing de la réponse IA. Structure JSON invalide.';
+            $ch = curl_init(GROQ_API_URL);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($promptData));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Authorization: Bearer ' . GROQ_API_KEY,
+                'Content-Type: application/json'
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, GROQ_TIMEOUT);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+            
+            if ($curlError) {
+                $error = 'Erreur de connexion: ' . htmlspecialchars($curlError);
+                if (DEBUG_MODE) {
+                    error_log("CURL Error: $curlError");
                 }
+            } elseif ($httpCode === 200 && $response) {
+                $result = json_decode($response, true);
+                $content = $result['choices'][0]['message']['content'] ?? '';
+                
+                // Extraire le JSON de la réponse
+                preg_match('/\{[\s\S]*\}/', $content, $matches);
+                if ($matches) {
+                    $parsedContent = json_decode($matches[0], true);
+                    
+                    if ($parsedContent && isset($parsedContent['description']) && isset($parsedContent['imagePrompt'])) {
+                        $imagePrompt = urlencode($parsedContent['imagePrompt']);
+                        
+                        // Générer l'URL de l'image
+                        $enhancedImageUrl = IMAGE_GENERATION_URL . $imagePrompt . "?width=" . IMAGE_WIDTH . "&height=" . IMAGE_HEIGHT . "&nologo=true&seed=" . time();
+                        
+                        // Télécharger l'image localement pour le téléchargement automatique
+                        $localImagePath = downloadImage($enhancedImageUrl, $productName);
+                        
+                        if (!$localImagePath) {
+                            // Si le téléchargement échoue, utiliser l'URL directe
+                            $localImagePath = $enhancedImageUrl;
+                        }
+                        
+                        $generatedResult = [
+                            'title' => $parsedContent['title'] ?? $productName,
+                            'description' => $parsedContent['description'],
+                            'imageUrl' => $enhancedImageUrl,
+                            'localImagePath' => $localImagePath,
+                            'prompt' => $parsedContent['imagePrompt'],
+                            'originalImage' => $originalImageUrl,
+                            'productData' => [
+                                'name' => $productName,
+                                'category' => $category,
+                                'brand' => $brand,
+                                'price' => $_POST['price'] ?? '',
+                            ]
+                        ];
+                        
+                        // Sauvegarder dans la session
+                        $_SESSION['last_generated'] = $generatedResult;
+                        
+                        // Générer le script de téléchargement automatique
+                        $autoDownloadScript = generateAutoDownloadScript($localImagePath, $productName);
+                        
+                    } else {
+                        $error = 'Erreur lors du parsing de la réponse IA. Structure JSON invalide.';
+                        if (DEBUG_MODE) {
+                            error_log("JSON Parse Error. Content: $content");
+                        }
+                    }
+                } else {
+                    $error = 'Format de réponse invalide. JSON non trouvé dans la réponse.';
+                    if (DEBUG_MODE) {
+                        error_log("JSON not found in response. Content: $content");
+                    }
+                }
+            } elseif ($httpCode === 401) {
+                $error = 'Erreur d\'authentification: Clé API Groq invalide. Veuillez vérifier votre clé API dans config.php.';
+            } elseif ($httpCode === 429) {
+                $error = 'Trop de requêtes. Veuillez patienter quelques instants avant de réessayer.';
             } else {
-                $error = 'Format de réponse invalide. JSON non trouvé dans la réponse.';
+                $error = 'Erreur de connexion à l\'API (HTTP ' . $httpCode . '). Veuillez réessayer.';
+                if (DEBUG_MODE && $response) {
+                    $apiError = json_decode($response, true);
+                    if (isset($apiError['error']['message'])) {
+                        $error .= ' Détails: ' . $apiError['error']['message'];
+                    }
+                }
             }
-        } else {
-            $error = 'Erreur de connexion à l\'API (HTTP ' . $httpCode . '). Veuillez réessayer.';
         }
     }
     
@@ -188,11 +217,11 @@ La boutique 'Beauty Clinic' propose des produits de luxe au Togo: parfums, sacs,
  * @return string|null Chemin local de l'image ou null en cas d'erreur
  */
 function downloadImage($url, $productName) {
-    $uploadDir = 'uploads/generated/';
+    $uploadDir = UPLOAD_DIR . 'generated/';
     
     // Créer le dossier s'il n'existe pas
     if (!is_dir($uploadDir)) {
-        if (!mkdir($uploadDir, 0755, true)) {
+        if (!@mkdir($uploadDir, 0755, true)) {
             error_log("Impossible de créer le dossier: $uploadDir");
             return null;
         }
@@ -209,22 +238,24 @@ function downloadImage($url, $productName) {
     $fileName = $safeName . '_' . time() . '.jpg';
     $filePath = $uploadDir . $fileName;
     
-    // Télécharger l'image
-    $imageData = @file_get_contents($url);
+    // Télécharger l'image avec cURL
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    $imageData = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
     
-    if ($imageData === false) {
-        // Essayer avec cURL si file_get_contents échoue
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Pour les certificats auto-signés
-        $imageData = curl_exec($ch);
-        curl_close($ch);
+    // Si cURL échoue, essayer file_get_contents
+    if ($imageData === false || $httpCode !== 200) {
+        $imageData = @file_get_contents($url);
     }
     
-    if ($imageData && strlen($imageData) > 1000) { // Vérifier que ce n'est pas une erreur
-        if (file_put_contents($filePath, $imageData)) {
+    if ($imageData && strlen($imageData) > 1000) {
+        if (@file_put_contents($filePath, $imageData)) {
             return $filePath;
         }
     }
@@ -235,30 +266,58 @@ function downloadImage($url, $productName) {
 
 /**
  * Génère le script JavaScript pour le téléchargement automatique
- * @param string $imagePath Chemin de l'image locale
+ * @param string $imagePath Chemin de l'image locale ou URL
  * @param string $productName Nom du produit
  * @return string Script JavaScript
  */
 function generateAutoDownloadScript($imagePath, $productName) {
     $safeName = sanitizeFileName($productName);
-    return "
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Téléchargement automatique de l'image générée
-        setTimeout(function() {
-            const link = document.createElement('a');
-            link.href = '" . htmlspecialchars($imagePath, ENT_QUOTES) . "';
-            link.download = '" . $safeName . "_beauty_clinic.jpg';
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            // Notification de succès
-            showNotification('Image téléchargée automatiquement !', 'success');
-        }, 1500); // Délai pour laisser l'image se charger
-    });
-    </script>";
+    $isUrl = filter_var($imagePath, FILTER_VALIDATE_URL);
+    
+    if ($isUrl) {
+        // Si c'est une URL externe, utiliser fetch pour télécharger
+        return "
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                fetch('" . htmlspecialchars($imagePath, ENT_QUOTES) . "')
+                    .then(response => response.blob())
+                    .then(blob => {
+                        const url = window.URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = '" . $safeName . "_beauty_clinic.jpg';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        window.URL.revokeObjectURL(url);
+                        showNotification('Image téléchargée automatiquement !', 'success');
+                    })
+                    .catch(error => {
+                        console.error('Erreur de téléchargement:', error);
+                        showNotification('Le téléchargement automatique a échoué. Utilisez le bouton manuel.', 'error');
+                    });
+            }, 2000);
+        });
+        </script>";
+    } else {
+        // Si c'est un fichier local
+        return "
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                const link = document.createElement('a');
+                link.href = '" . htmlspecialchars($imagePath, ENT_QUOTES) . "';
+                link.download = '" . $safeName . "_beauty_clinic.jpg';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showNotification('Image téléchargée automatiquement !', 'success');
+            }, 1500);
+        });
+        </script>";
+    }
 }
 
 /**
@@ -267,12 +326,11 @@ function generateAutoDownloadScript($imagePath, $productName) {
  * @return string Nom sécurisé
  */
 function sanitizeFileName($name) {
-    // Convertir en minuscules et remplacer les espaces
     $name = strtolower(trim($name));
     $name = preg_replace('/[^a-z0-9\-_]/', '_', $name);
-    $name = preg_replace('/_+/', '_', $name); // Éviter les underscores multiples
+    $name = preg_replace('/_+/', '_', $name);
     $name = trim($name, '_');
-    return substr($name, 0, 50); // Limiter la longueur
+    return substr($name, 0, 50);
 }
 
 /**
@@ -297,8 +355,8 @@ $uploadedImage = null;
 $uploadError = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['product_image']) && $_FILES['product_image']['error'] !== UPLOAD_ERR_NO_FILE) {
-    $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    $maxSize = 5 * 1024 * 1024; // 5MB
+    $allowedTypes = UPLOAD_ALLOWED_TYPES;
+    $maxSize = UPLOAD_MAX_SIZE;
     
     $file = $_FILES['product_image'];
     
@@ -322,22 +380,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['product_image']) && 
         } elseif ($file['size'] > $maxSize) {
             $uploadError = 'Le fichier est trop volumineux. Taille maximale: 5 Mo.';
         } else {
-            $uploadDir = 'uploads/generator/';
+            $uploadDir = UPLOAD_DIR . 'generator/';
             
             if (!is_dir($uploadDir)) {
-                if (!mkdir($uploadDir, 0755, true)) {
+                if (!@mkdir($uploadDir, 0755, true)) {
                     $uploadError = 'Impossible de créer le dossier d\'upload.';
                 }
             }
             
             if (!$uploadError) {
-                // Générer un nom de fichier sécurisé avec l'extension originale
                 $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
                 $extension = strtolower(preg_replace('/[^a-z0-9]/', '', $extension));
                 $fileName = time() . '_' . bin2hex(random_bytes(8)) . '.' . $extension;
                 $targetPath = $uploadDir . $fileName;
                 
-                if (move_uploaded_file($file['tmp_name'], $targetPath)) {
+                if (@move_uploaded_file($file['tmp_name'], $targetPath)) {
                     $uploadedImage = $targetPath;
                 } else {
                     $uploadError = 'Erreur lors de la sauvegarde du fichier.';
@@ -392,11 +449,7 @@ $styles = [
             --error: #ef4444;
         }
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
             font-family: 'Inter', sans-serif;
@@ -405,7 +458,6 @@ $styles = [
             color: var(--dark);
         }
         
-        /* Header */
         .header {
             position: sticky;
             top: 0;
@@ -451,10 +503,7 @@ $styles = [
             -webkit-text-fill-color: transparent;
         }
         
-        .logo-text p {
-            font-size: 0.7rem;
-            color: var(--gray);
-        }
+        .logo-text p { font-size: 0.7rem; color: var(--gray); }
         
         .badge-ai {
             padding: 0.4rem 0.875rem;
@@ -468,7 +517,6 @@ $styles = [
             gap: 0.4rem;
         }
         
-        /* Main Content */
         .main-container {
             max-width: 1400px;
             margin: 0 auto;
@@ -500,7 +548,6 @@ $styles = [
             margin: 0 auto;
         }
         
-        /* Grid Layout */
         .content-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -508,12 +555,9 @@ $styles = [
         }
         
         @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
+            .content-grid { grid-template-columns: 1fr; }
         }
         
-        /* Cards */
         .card {
             background: white;
             border-radius: 20px;
@@ -536,18 +580,11 @@ $styles = [
             color: var(--dark);
         }
         
-        .card-header h3 i {
-            color: var(--primary);
-        }
+        .card-header h3 i { color: var(--primary); }
         
-        .card-body {
-            padding: 1.5rem;
-        }
+        .card-body { padding: 1.5rem; }
         
-        /* Form Styles */
-        .form-group {
-            margin-bottom: 1.25rem;
-        }
+        .form-group { margin-bottom: 1.25rem; }
         
         .form-group label {
             display: block;
@@ -557,9 +594,7 @@ $styles = [
             color: var(--dark);
         }
         
-        .form-group label .required {
-            color: var(--error);
-        }
+        .form-group label .required { color: var(--error); }
         
         .form-control {
             width: 100%;
@@ -590,12 +625,9 @@ $styles = [
         }
         
         @media (max-width: 640px) {
-            .form-row {
-                grid-template-columns: 1fr;
-            }
+            .form-row { grid-template-columns: 1fr; }
         }
         
-        /* Image Upload */
         .image-upload-area {
             border: 2px dashed var(--border);
             border-radius: 16px;
@@ -628,9 +660,7 @@ $styles = [
             font-size: 0.9rem;
         }
         
-        .image-upload-area input[type="file"] {
-            display: none;
-        }
+        .image-upload-area input[type="file"] { display: none; }
         
         .preview-image {
             max-width: 100%;
@@ -639,7 +669,6 @@ $styles = [
             margin-top: 1rem;
         }
         
-        /* Buttons */
         .btn {
             padding: 0.875rem 1.5rem;
             border-radius: 12px;
@@ -689,7 +718,6 @@ $styles = [
             color: white;
         }
         
-        /* Result Section */
         .result-section {
             animation: fadeIn 0.5s ease-out;
         }
@@ -713,9 +741,7 @@ $styles = [
             transition: transform 0.3s;
         }
         
-        .result-image-container:hover img {
-            transform: scale(1.02);
-        }
+        .result-image-container:hover img { transform: scale(1.02); }
         
         .image-overlay {
             position: absolute;
@@ -733,7 +759,6 @@ $styles = [
             opacity: 1;
         }
         
-        /* Description Box */
         .description-box {
             background: linear-gradient(135deg, rgba(139, 92, 246, 0.05), rgba(236, 72, 153, 0.05));
             border-radius: 16px;
@@ -750,9 +775,7 @@ $styles = [
             margin-bottom: 0.75rem;
         }
         
-        .description-box h4 i {
-            color: var(--secondary);
-        }
+        .description-box h4 i { color: var(--secondary); }
         
         .description-text {
             color: var(--gray);
@@ -760,7 +783,6 @@ $styles = [
             font-size: 0.95rem;
         }
         
-        /* Comparison */
         .comparison-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -768,9 +790,7 @@ $styles = [
             margin-bottom: 1.5rem;
         }
         
-        .comparison-item {
-            text-align: center;
-        }
+        .comparison-item { text-align: center; }
         
         .comparison-item h5 {
             font-size: 0.8rem;
@@ -788,11 +808,8 @@ $styles = [
             border: 2px solid var(--border);
         }
         
-        .comparison-item.enhanced img {
-            border-color: var(--success);
-        }
+        .comparison-item.enhanced img { border-color: var(--success); }
         
-        /* Alert */
         .alert {
             padding: 1rem 1.25rem;
             border-radius: 12px;
@@ -807,17 +824,16 @@ $styles = [
             color: #991b1b;
         }
         
+        .alert-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
         .alert-success {
             background: #d1fae5;
             color: #065f46;
         }
         
-        .alert-info {
-            background: #dbeafe;
-            color: #1e40af;
-        }
-        
-        /* Loading */
         .loading-spinner {
             display: inline-block;
             width: 20px;
@@ -832,7 +848,6 @@ $styles = [
             to { transform: rotate(360deg); }
         }
         
-        /* Info Cards */
         .info-cards {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -865,7 +880,6 @@ $styles = [
             color: var(--gray);
         }
         
-        /* Empty State */
         .empty-state {
             text-align: center;
             padding: 3rem 2rem;
@@ -906,7 +920,6 @@ $styles = [
             margin: 0 auto;
         }
         
-        /* Prompt Info */
         .prompt-info {
             background: #f3f4f6;
             border-radius: 12px;
@@ -926,18 +939,14 @@ $styles = [
             word-break: break-all;
         }
         
-        /* Action Buttons */
         .action-buttons {
             display: flex;
             gap: 0.75rem;
             margin-top: 1.5rem;
         }
         
-        .action-buttons .btn {
-            flex: 1;
-        }
+        .action-buttons .btn { flex: 1; }
         
-        /* Footer */
         .footer {
             text-align: center;
             padding: 2rem;
@@ -945,7 +954,6 @@ $styles = [
             font-size: 0.85rem;
         }
         
-        /* Notification Toast */
         .notification {
             position: fixed;
             top: 20px;
@@ -972,7 +980,6 @@ $styles = [
             to { transform: translateX(0); opacity: 1; }
         }
         
-        /* Auto-download indicator */
         .auto-download-badge {
             display: inline-flex;
             align-items: center;
@@ -995,10 +1002,31 @@ $styles = [
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-3px); }
         }
+
+        .api-key-warning {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            border: 2px solid #f59e0b;
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            color: #92400e;
+        }
+
+        .api-key-warning i {
+            font-size: 1.25rem;
+            margin-top: 0.125rem;
+        }
+
+        .api-key-warning strong {
+            display: block;
+            margin-bottom: 0.25rem;
+        }
     </style>
 </head>
 <body>
-    <!-- Header -->
     <header class="header">
         <div class="header-container">
             <a href="index.php" class="logo">
@@ -1017,9 +1045,7 @@ $styles = [
         </div>
     </header>
 
-    <!-- Main Content -->
     <main class="main-container">
-        <!-- Hero -->
         <section class="hero-section">
             <h2>
                 Transformez vos photos en
@@ -1031,9 +1057,7 @@ $styles = [
             </p>
         </section>
 
-        <!-- Content Grid -->
         <div class="content-grid">
-            <!-- Formulaire -->
             <div class="card">
                 <div class="card-header">
                     <h3>
@@ -1042,6 +1066,18 @@ $styles = [
                     </h3>
                 </div>
                 <div class="card-body">
+                    <?php if (!isApiKeyConfigured()): ?>
+                    <div class="api-key-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <div>
+                            <strong>Configuration requise</strong>
+                            La clé API Groq n'est pas configurée. Veuillez définir la variable d'environnement <code>GROQ_API_KEY</code> ou modifier le fichier <code>config.php</code>.
+                            <br><br>
+                            <a href="https://console.groq.com/keys" target="_blank" style="color: #92400e; text-decoration: underline;">Obtenir une clé API gratuite →</a>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+
                     <?php if ($error): ?>
                     <div class="alert alert-error">
                         <i class="fas fa-exclamation-circle"></i>
@@ -1049,8 +1085,7 @@ $styles = [
                     </div>
                     <?php endif; ?>
 
-                    <form method="POST" action="" enctype="multipart/form-data" id="generatorForm">
-                        <!-- Upload Image -->
+                    <form method="POST" action="index.php" enctype="multipart/form-data" id="generatorForm">
                         <div class="form-group">
                             <label>Photo du produit</label>
                             <div class="image-upload-area <?php echo $uploadedImage ? 'has-image' : ''; ?>" onclick="document.getElementById('product_image').click()">
@@ -1129,7 +1164,7 @@ $styles = [
                         </div>
 
                         <div style="display: flex; gap: 0.75rem;">
-                            <button type="submit" name="generer" class="btn btn-primary" <?php echo $isGenerating ? 'disabled' : ''; ?>>
+                            <button type="submit" name="generer" class="btn btn-primary" <?php echo ($isGenerating || !isApiKeyConfigured()) ? 'disabled' : ''; ?>>
                                 <?php if ($isGenerating): ?>
                                 <span class="loading-spinner"></span>
                                 Génération en cours...
@@ -1146,7 +1181,6 @@ $styles = [
                 </div>
             </div>
 
-            <!-- Résultat -->
             <div>
                 <?php if ($generatedResult): ?>
                 <div class="result-section">
@@ -1158,14 +1192,12 @@ $styles = [
                             </h3>
                         </div>
                         <div class="card-body">
-                            <!-- Badge de téléchargement automatique -->
                             <div class="auto-download-badge">
                                 <i class="fas fa-download"></i>
                                 Téléchargement automatique en cours...
                             </div>
                             
                             <?php if ($generatedResult['originalImage']): ?>
-                            <!-- Comparaison -->
                             <div class="comparison-grid">
                                 <div class="comparison-item">
                                     <h5>Photo originale</h5>
@@ -1177,7 +1209,6 @@ $styles = [
                                 </div>
                             </div>
                             <?php else: ?>
-                            <!-- Image seule -->
                             <div class="result-image-container">
                                 <img src="<?php echo htmlspecialchars($generatedResult['imageUrl']); ?>" alt="<?php echo htmlspecialchars($generatedResult['title']); ?>" id="generatedImage">
                                 <div class="image-overlay">
@@ -1189,7 +1220,6 @@ $styles = [
                             </div>
                             <?php endif; ?>
 
-                            <!-- Description -->
                             <div class="description-box">
                                 <h4>
                                     <i class="fas fa-file-alt"></i>
@@ -1202,7 +1232,6 @@ $styles = [
                                 </button>
                             </div>
 
-                            <!-- Actions -->
                             <div class="action-buttons">
                                 <button class="btn btn-success" onclick="downloadImageManual()">
                                     <i class="fas fa-download"></i>
@@ -1214,7 +1243,6 @@ $styles = [
                                 </button>
                             </div>
 
-                            <!-- Prompt Info -->
                             <div class="prompt-info">
                                 <h5><i class="fas fa-code"></i> Prompt utilisé (référence)</h5>
                                 <code><?php echo htmlspecialchars(substr($generatedResult['prompt'], 0, 200)) . '...'; ?></code>
@@ -1223,7 +1251,6 @@ $styles = [
                     </div>
                 </div>
                 <?php else: ?>
-                <!-- Empty State -->
                 <div class="card">
                     <div class="empty-state">
                         <div class="empty-state-icon">
@@ -1258,7 +1285,6 @@ $styles = [
             </div>
         </div>
 
-        <!-- Footer -->
         <footer class="footer">
             <p>
                 © 2026 Beauty Clinic - Générateur de Produits IA. 
@@ -1268,7 +1294,6 @@ $styles = [
     </main>
 
     <script>
-        // Preview image before upload
         function previewImage(input) {
             if (input.files && input.files[0]) {
                 const reader = new FileReader();
@@ -1282,7 +1307,6 @@ $styles = [
             }
         }
 
-        // Copy text to clipboard
         function copyText(text) {
             navigator.clipboard.writeText(text).then(() => {
                 showNotification('Description copiée !', 'success');
@@ -1291,9 +1315,7 @@ $styles = [
             });
         }
 
-        // Show notification
         function showNotification(message, type = 'success') {
-            // Supprimer les notifications existantes
             const existing = document.querySelectorAll('.notification');
             existing.forEach(n => n.remove());
             
@@ -1309,7 +1331,6 @@ $styles = [
             }, 3000);
         }
 
-        // Add to catalog (placeholder function)
         function addToCatalog(title, description, imageUrl) {
             const params = new URLSearchParams({
                 page: 'products',
@@ -1323,7 +1344,6 @@ $styles = [
             }
         }
 
-        // Manual download function
         function downloadImageManual() {
             const imageUrl = '<?php echo isset($generatedResult['localImagePath']) ? htmlspecialchars($generatedResult['localImagePath'], ENT_QUOTES) : ''; ?>';
             const productName = '<?php echo isset($generatedResult['title']) ? htmlspecialchars(sanitizeFileName($generatedResult['title']), ENT_QUOTES) : 'produit'; ?>';
@@ -1341,27 +1361,6 @@ $styles = [
                 showNotification('Erreur: image non disponible', 'error');
             }
         }
-
-        // Auto-download on page load if result exists
-        <?php if ($generatedResult && !empty($autoDownloadScript)): ?>
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(function() {
-                const imageUrl = '<?php echo isset($generatedResult['localImagePath']) ? htmlspecialchars($generatedResult['localImagePath'], ENT_QUOTES) : ''; ?>';
-                const productName = '<?php echo isset($generatedResult['title']) ? htmlspecialchars(sanitizeFileName($generatedResult['title']), ENT_QUOTES) : 'produit'; ?>';
-                
-                if (imageUrl) {
-                    const link = document.createElement('a');
-                    link.href = imageUrl;
-                    link.download = productName + '_beauty_clinic.jpg';
-                    link.style.display = 'none';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    showNotification('Image téléchargée automatiquement !', 'success');
-                }
-            }, 2000);
-        });
-        <?php endif; ?>
     </script>
     
     <?php echo $autoDownloadScript; ?>

@@ -1,0 +1,75 @@
+# ============================================================================
+# Configuration Apache pour Beauty Clinic - Générateur de Produits IA
+# ============================================================================
+
+# Activer le moteur de réécriture
+RewriteEngine On
+
+# Rediriger vers index.php si le fichier/répertoire n'existe pas
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+# Définir la page d'accueil par défaut
+DirectoryIndex index.php index.html
+
+# ============================================================================
+# Configuration PHP
+# ============================================================================
+
+# Augmenter la taille maximale des uploads
+php_value upload_max_filesize 10M
+php_value post_max_size 10M
+php_value max_execution_time 120
+php_value max_input_time 120
+php_value memory_limit 256M
+
+# Désactiver l'affichage des erreurs en production
+php_flag display_errors off
+php_value error_log logs/php_errors.log
+
+# ============================================================================
+# Sécurité
+# ============================================================================
+
+# Empêcher l'accès aux fichiers sensibles
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+<FilesMatch "\.(json|lock|md|gitignore)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Protéger le fichier config.php
+<Files "config.php">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Activer la protection contre les attaques XSS dans le navigateur
+Header always set X-XSS-Protection "1; mode=block"
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "SAMEORIGIN"
+
+# ============================================================================
+# Compression et Cache
+# ============================================================================
+
+# Activer la compression Gzip
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
+</IfModule>
+
+# Cache pour les images et fichiers statiques
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType text/css "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+</IfModule>
