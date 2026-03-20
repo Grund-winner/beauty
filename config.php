@@ -13,7 +13,7 @@
 // Obtenez une clé gratuite sur: https://console.groq.com/keys
 $groqApiKey = getenv('GROQ_API_KEY'); // Essayer d'abord les variables d'environnement
 
-if (!$groqApiKey || $groqApiKey === 'gsk_votre_cle_api_ici') {
+if (!$groqApiKey || $groqApiKey === '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') {
     // Si pas de variable d'environnement, utiliser la valeur par défaut
     $groqApiKey = 'gsk_votre_cle_api_ici';
 }
